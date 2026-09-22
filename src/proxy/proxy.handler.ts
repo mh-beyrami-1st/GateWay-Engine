@@ -22,7 +22,6 @@ const removedHeaders = [
 
 const getTargetUrl = (req: Request): URL | null => {
     const encodedTarget = (req.originalUrl || req.url || '').replace(/^\/__p\//, '');
-
     try {
         const target = new URL(encodedTarget);
         if (target.protocol === 'http:' || target.protocol === 'https:') return target;
@@ -56,7 +55,6 @@ const getInjectedScript = (currentUrl: string): string => `
     function proxify(value) {
         if (isIgnored(value) || systemPrefixes.some((prefix) => value.startsWith(prefix))) return value;
         if (value.startsWith('//')) return '/__p/https:' + value;
-
         const resolved = resolveUrl(value);
         return resolved ? '/__p/' + resolved : value;
     }
@@ -69,10 +67,8 @@ const getInjectedScript = (currentUrl: string): string => `
     document.addEventListener('click', function (event) {
         const link = event.target.closest('a');
         if (!link || !link.hasAttribute('href')) return;
-
         const href = link.getAttribute('href');
         if (isIgnored(href) || href.startsWith('/__p/')) return;
-
         event.preventDefault();
         event.stopImmediatePropagation();
         navigate(href);
@@ -81,10 +77,8 @@ const getInjectedScript = (currentUrl: string): string => `
     document.addEventListener('submit', function (event) {
         const form = event.target.closest('form');
         if (!form) return;
-
         event.preventDefault();
         event.stopImmediatePropagation();
-
         try {
             const action = new URL(form.getAttribute('action') || '', currentUrl);
             const params = new URLSearchParams(new FormData(form));
@@ -100,12 +94,67 @@ const getInjectedScript = (currentUrl: string): string => `
             : value;
         return nativeSetAttribute.call(this, name, nextValue);
     };
+
+    // بازگرداندن تله‌ی امنیتی ساخت عناصر که در ریفکتور حذف شده بود
+    const originalCreateElement = document.createElement.bind(document);
+    document.createElement = function(tagName, options) {
+        const el = originalCreateElement(tagName, options);
+        const tag = String(tagName).toLowerCase();
+        if (['script', 'img', 'iframe', 'link', 'source', 'video', 'audio'].includes(tag)) {
+            try {
+                let srcVal = '', hrefVal = '';
+                Object.defineProperty(el, 'src', {
+                    configurable: true,
+                    get: function() { return srcVal || this.getAttribute('src') || ''; },
+                    set: function(v) { srcVal = proxify(v); nativeSetAttribute.call(this, 'src', srcVal); }
+                });
+                Object.defineProperty(el, 'href', {
+                    configurable: true,
+                    get: function() { return hrefVal || this.getAttribute('href') || ''; },
+                    set: function(v) { hrefVal = proxify(v); nativeSetAttribute.call(this, 'href', hrefVal); }
+                });
+            } catch(err) {}
+        }
+        return el;
+    };
+
+    // تله‌گذاری برای SPA روترها (تثبیت وضعیت تب تصاویر)
+    const originalPushState = history.pushState;
+    history.pushState = function(state, unused, url) {
+        if (url) url = proxify(url.toString());
+        return originalPushState.call(this, state, unused, url);
+    };
+    const originalReplaceState = history.replaceState;
+    history.replaceState = function(state, unused, url) {
+        if (url) url = proxify(url.toString());
+        return originalReplaceState.call(this, state, unused, url);
+    };
+
+    const originalXHROpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+        if (typeof url === 'string') {
+            url = proxify(url);
+        }
+        return originalXHROpen.call(this, method, url, ...rest);
+    };
+
+    const originalFetch = window.fetch;
+    window.fetch = function (...args) {
+        if (typeof args[0] === 'string') {
+            args[0] = proxify(args[0]);
+        } else if (args[0] && args[0] instanceof Request) {
+            try {
+                args[0] = new Request(proxify(args[0].url), args[0]);
+            } catch(e) {}
+        }
+        return originalFetch.apply(this, args);
+    };
 })();
 </script>
 `;
 
 const rewriteCssUrls = (css: string, targetOrigin: string): string => css.replace(
-    /url\(\s*(['"]?)(\/(?!\/|__p\/|__engine\/|__static\/)[^'")]*)\1\s*\)/gi,
+    /url\(\s*(['"]?)(\/(?!\/\vert{}__p\/\vert{}__engine\/\vert{}__static\/)[^'")]*)\1\s*\)/gi,
     (_, quote: string, path: string) => `url(${quote}${proxiedPath}${targetOrigin}${path}${quote})`
 );
 
@@ -119,10 +168,12 @@ const rewriteHtmlPaths = (html: string, targetOrigin: string): string => {
         /(\s(?:src|href|action|poster|data-src)\s*=\s*)(["'])\/(?!\/|__p\/|__engine\/|__static\/)([^"']*)\2/gi,
         `$1$2${proxiedPath}${targetOrigin}/$3$2`
     );
+
     result = result.replace(
         /(\s(?:src|href|action|poster|data-src)\s*=\s*)(["'])\/\/([^"']+)\2/gi,
         `$1$2${proxiedPath}https://$3$2`
     );
+
     result = result.replace(
         /([;,\s]url\s*=\s*["']?)\/(?!\/|__p\/|__engine\/|__static\/)/gi,
         `$1${proxiedPath}${targetOrigin}/`
@@ -135,14 +186,15 @@ const rewriteResponse = (html: string, target: URL): string => {
     const rewritten = rewriteHtmlPaths(html.replace(/integrity=(['"]).*?\1/gi, ''), target.origin);
     const injection = getInjectedScript(target.href);
 
-    if (/<head\b[^>]*>/i.test(rewritten)) return rewritten.replace(/(<head\b[^>]*>)/i, `$1${injection}`);
-    if (/<html\b[^>]*>/i.test(rewritten)) return rewritten.replace(/(<html\b[^>]*>)/i, `$1<head>${injection}</head>`);
-    return `${injection}${rewritten}`;
+    if (/<head\b[^>]*>/i.test(rewritten)) return rewritten.replace(/(<head\b[^>]*>)/i, `$1\n${injection}`);
+    if (/<html\b[^>]*>/i.test(rewritten)) return rewritten.replace(/(<html\b[^>]*>)/i, `$1\n<head>${injection}</head>`);
+    return `${injection}\n${rewritten}`;
 };
 
 export const proxyHandler = createProxyMiddleware({
     router: (req: Request) => getTargetUrl(req)?.origin ?? envConfig.defaultEngine,
     changeOrigin: true,
+    secure: false,
     selfHandleResponse: true,
     ws: true,
     pathRewrite: (path, req) => {
@@ -170,15 +222,20 @@ export const proxyHandler = createProxyMiddleware({
 
             const status = proxyRes.statusCode ?? 200;
             const location = proxyRes.headers.location;
+
             if (redirectStatuses.has(status) && location) {
                 try {
-                    expressRes.setHeader('location', `${proxiedPath}${new URL(String(location), target.href).href}`);
+                    const locStr = String(location);
+                    if (!locStr.startsWith('/__p/')) {
+                        expressRes.setHeader('location', `${proxiedPath}${new URL(locStr, target.origin).href}`);
+                    }
                 } catch {}
                 return responseBuffer;
             }
 
             const contentType = String(proxyRes.headers['content-type'] ?? '').toLowerCase();
             const requestUrl = (req.originalUrl || '').toLowerCase();
+
             if (contentType.includes('text/html')) {
                 return Buffer.from(rewriteResponse(responseBuffer.toString('utf8'), target), 'utf8');
             }
@@ -191,7 +248,7 @@ export const proxyHandler = createProxyMiddleware({
         }),
         error: (_error, _req, res) => {
             const expressRes = res as Response;
-            if (!expressRes.headersSent) expressRes.status(502).send('Gateway Engine: target unreachable.');
+            if (!expressRes.headersSent) expressRes.status(502).send(`Gateway Engine: target unreachable. Reason: ${_error.message}`);
         }
     }
 });
