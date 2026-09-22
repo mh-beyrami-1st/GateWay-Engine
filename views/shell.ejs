@@ -8,7 +8,7 @@
 </head>
 <body>
     <iframe id="gateway-view" src="/__newtab"></iframe>
-    
+
     <div id="__engine_bar__" style="display: none;">
         <button onclick="try{document.getElementById('gateway-view').contentWindow.history.back()}catch(e){}">◀</button>
         <button onclick="try{document.getElementById('gateway-view').contentWindow.history.forward()}catch(e){}">▶</button>
@@ -25,13 +25,12 @@
 
         view.addEventListener('load', () => {
             try {
-                const currentHref = view.contentWindow.location.href;
-                if (currentHref.includes('/__newtab')) {
+                const href = view.contentWindow.location.href;
+                if (href.includes('/__newtab')) {
                     input.value = '';
-                    input.placeholder = 'Search or type URL...';
                     engineBar.style.display = 'none';
-                } else if (currentHref.includes('/__p/')) {
-                    const target = currentHref.split('/__p/').slice(1).join('/__p/');
+                } else if (href.includes('/__p/')) {
+                    const target = href.split('/__p/').slice(1).join('/__p/');
                     input.value = decodeURI(target);
                     engineBar.style.display = 'flex';
                 }
@@ -39,6 +38,9 @@
         });
 
         async function navigateTo(target) {
+            if (typeof target === 'string' && target.startsWith('/__p/')) {
+                target = target.replace(/^\/__p\//, '');
+            }
             try {
                 const res = await fetch('/__engine/set-target', {
                     method: 'POST',
@@ -46,11 +48,10 @@
                     body: JSON.stringify({ target })
                 });
                 const data = await res.json();
-                
                 if (data.success) {
                     view.src = data.url;
                 }
-            } catch (e) {}
+            } catch(e) {}
         }
 
         document.getElementById('engine-form').addEventListener('submit', (e) => {
