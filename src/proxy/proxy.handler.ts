@@ -6,6 +6,7 @@ const proxiedPath = '/__p/';
 const systemPrefixes = ['/__p/', '/__engine/', '/__static/'];
 const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+
 const removedHeaders = [
     'content-security-policy',
     'content-security-policy-report-only',
@@ -18,6 +19,18 @@ const removedHeaders = [
     'attribution-reporting-register-source',
     'attribution-reporting-register-trigger',
     'attribution-reporting-info'
+];
+
+// لیست هدرهایی که ورسل اضافه می‌کند و باعث لو رفتن پروکسی می‌شود
+const vercelProxyHeaders = [
+    'x-forwarded-for', 
+    'x-forwarded-host', 
+    'x-forwarded-proto',
+    'x-vercel-id', 
+    'x-vercel-forwarded-for', 
+    'x-real-ip', 
+    'forwarded', 
+    'via'
 ];
 
 const getTargetUrl = (req: Request): URL | null => {
@@ -98,7 +111,6 @@ const getInjectedScript = (currentUrl: string): string => `
         return nativeSetAttribute.call(this, name, nextValue);
     };
 
-    // DOM Element Interception
     const originalCreateElement = document.createElement.bind(document);
     document.createElement = function(tagName, options) {
         const el = originalCreateElement(tagName, options);
@@ -122,7 +134,6 @@ const getInjectedScript = (currentUrl: string): string => `
         return el;
     };
 
-    // SPA Navigation Interception
     const originalPushState = history.pushState;
     history.pushState = function(state, unused, url) {
         if (url) url = proxify(url.toString());
@@ -210,7 +221,10 @@ export const proxyHandler = createProxyMiddleware({
             const target = getTargetUrl(req);
             if (!target) return;
             
+            // خنثی کردن سیستم تشخیص ربات داک‌داک‌گو
             proxyReq.removeHeader('accept-encoding');
+            vercelProxyHeaders.forEach(h => proxyReq.removeHeader(h));
+            
             proxyReq.setHeader('Referer', `${target.origin}/`);
             proxyReq.setHeader('Origin', target.origin);
             proxyReq.setHeader('Host', target.host);
