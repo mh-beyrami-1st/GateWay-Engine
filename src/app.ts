@@ -1,17 +1,17 @@
 import express from 'express';
 import path from 'path';
-import viewRoutes from './routes/view.routes';
-import engineRoutes from './routes/engine.routes';
-import { proxyHandler } from './proxy/proxy.handler';
-import { errorHandler } from './middlewares/error.middleware';
-import { envConfig } from './config/env.config';
+import viewRoutes from './routes/view.routes.js';
+import engineRoutes from './routes/engine.routes.js';
+import { proxyHandler } from './proxy/proxy.handler.js';
+import { errorHandler } from './middlewares/error.middleware.js';
+import { envConfig } from './config/env.config.js';
 
 const app = express();
 
 app.set('view engine', 'ejs');
-app.set('views', path.resolve('views'));
+app.set('views', path.join(process.cwd(), 'views'));
 
-app.use('/__static', express.static(path.resolve('public')));
+app.use('/__static', express.static(path.join(process.cwd(), 'public')));
 
 app.use('/__p', proxyHandler);
 

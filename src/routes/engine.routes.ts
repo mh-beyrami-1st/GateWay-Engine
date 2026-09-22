@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { parseTargetUrl } from '../utils/url.parser';
-import { envConfig } from '../config/env.config';
+import { parseTargetUrl } from '../utils/url.parser.js';
+import { envConfig } from '../config/env.config.js';
 
 const router = Router();
 
@@ -10,8 +10,9 @@ router.post('/set-target', (req, res) => {
     if (typeof target !== 'string' || !target.trim() || target === 'MAIN') {
         return res.json({ success: true, url: '/__newtab' });
     }
-
+    
     const finalUrl = parseTargetUrl(target, envConfig.defaultEngine);
+    
     res.json({ 
         success: true, 
         url: `/__p/${finalUrl}`,

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
-import { envConfig } from '../config/env.config';
+import { envConfig } from '../config/env.config.js';
 
 const proxiedPath = '/__p/';
 const systemPrefixes = ['/__p/', '/__engine/', '/__static/'];
@@ -26,11 +26,11 @@ const getTargetUrl = (req: Request): URL | null => {
         const target = new URL(encodedTarget);
         if (target.protocol === 'http:' || target.protocol === 'https:') return target;
     } catch {}
-
+    
     const referer = req.headers.referer ?? '';
     const match = referer.match(/\/__p\/(https?:\/\/[^/\s?#]+)/i);
     if (!match) return null;
-
+    
     try {
         return new URL(match[1]);
     } catch {
@@ -69,6 +69,7 @@ const getInjectedScript = (currentUrl: string): string => `
         if (!link || !link.hasAttribute('href')) return;
         const href = link.getAttribute('href');
         if (isIgnored(href) || href.startsWith('/__p/')) return;
+        
         event.preventDefault();
         event.stopImmediatePropagation();
         navigate(href);
@@ -77,8 +78,10 @@ const getInjectedScript = (currentUrl: string): string => `
     document.addEventListener('submit', function (event) {
         const form = event.target.closest('form');
         if (!form) return;
+        
         event.preventDefault();
         event.stopImmediatePropagation();
+        
         try {
             const action = new URL(form.getAttribute('action') || '', currentUrl);
             const params = new URLSearchParams(new FormData(form));
@@ -95,11 +98,12 @@ const getInjectedScript = (currentUrl: string): string => `
         return nativeSetAttribute.call(this, name, nextValue);
     };
 
-    // بازگرداندن تله‌ی امنیتی ساخت عناصر که در ریفکتور حذف شده بود
+    // DOM Element Interception
     const originalCreateElement = document.createElement.bind(document);
     document.createElement = function(tagName, options) {
         const el = originalCreateElement(tagName, options);
         const tag = String(tagName).toLowerCase();
+        
         if (['script', 'img', 'iframe', 'link', 'source', 'video', 'audio'].includes(tag)) {
             try {
                 let srcVal = '', hrefVal = '';
@@ -118,12 +122,13 @@ const getInjectedScript = (currentUrl: string): string => `
         return el;
     };
 
-    // تله‌گذاری برای SPA روترها (تثبیت وضعیت تب تصاویر)
+    // SPA Navigation Interception
     const originalPushState = history.pushState;
     history.pushState = function(state, unused, url) {
         if (url) url = proxify(url.toString());
         return originalPushState.call(this, state, unused, url);
     };
+
     const originalReplaceState = history.replaceState;
     history.replaceState = function(state, unused, url) {
         if (url) url = proxify(url.toString());
@@ -150,8 +155,7 @@ const getInjectedScript = (currentUrl: string): string => `
         return originalFetch.apply(this, args);
     };
 })();
-</script>
-`;
+</script>`;
 
 const rewriteCssUrls = (css: string, targetOrigin: string): string => css.replace(
     /url\(\s*(['"]?)(\/(?!\/\vert{}__p\/\vert{}__engine\/\vert{}__static\/)[^'")]*)\1\s*\)/gi,
@@ -163,17 +167,17 @@ const rewriteHtmlPaths = (html: string, targetOrigin: string): string => {
         .replace(/<meta[^>]+http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>/gi, '')
         .replace(/<meta[^>]+name\s*=\s*["']?referrer["']?[^>]*>/gi, '')
         .replace(/\bping\s*=\s*(["']).*?\1/gi, '');
-
+        
     result = result.replace(
         /(\s(?:src|href|action|poster|data-src)\s*=\s*)(["'])\/(?!\/|__p\/|__engine\/|__static\/)([^"']*)\2/gi,
         `$1$2${proxiedPath}${targetOrigin}/$3$2`
     );
-
+    
     result = result.replace(
         /(\s(?:src|href|action|poster|data-src)\s*=\s*)(["'])\/\/([^"']+)\2/gi,
         `$1$2${proxiedPath}https://$3$2`
     );
-
+    
     result = result.replace(
         /([;,\s]url\s*=\s*["']?)\/(?!\/|__p\/|__engine\/|__static\/)/gi,
         `$1${proxiedPath}${targetOrigin}/`
@@ -205,7 +209,7 @@ export const proxyHandler = createProxyMiddleware({
         proxyReq: (proxyReq, req: Request) => {
             const target = getTargetUrl(req);
             if (!target) return;
-
+            
             proxyReq.removeHeader('accept-encoding');
             proxyReq.setHeader('Referer', `${target.origin}/`);
             proxyReq.setHeader('Origin', target.origin);
@@ -217,6 +221,7 @@ export const proxyHandler = createProxyMiddleware({
             if (!target) return responseBuffer;
 
             const expressRes = res as Response;
+            
             removedHeaders.forEach((header) => expressRes.removeHeader(header));
             expressRes.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -239,7 +244,6 @@ export const proxyHandler = createProxyMiddleware({
             if (contentType.includes('text/html')) {
                 return Buffer.from(rewriteResponse(responseBuffer.toString('utf8'), target), 'utf8');
             }
-
             if (contentType.includes('text/css') || requestUrl.endsWith('.css')) {
                 return Buffer.from(rewriteCssUrls(responseBuffer.toString('utf8'), target.origin), 'utf8');
             }
