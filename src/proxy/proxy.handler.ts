@@ -14,15 +14,16 @@ const getTargetUrl = (req: Request): URL | null => {
 const getInjectJS = (currentUrl: string) => `
 <script>
 (function() {
-    const _url = '${currentUrl}';
+    const currentOrigin = '${currentUrl}';
+    
     document.addEventListener('click', function(e) {
         let a = e.target.closest('a');
         if (a && a.hasAttribute('href')) {
             let href = a.getAttribute('href');
-            if (href.startsWith('javascript:') || href.startsWith('#')) return;
+            if (!href || href.startsWith('javascript:') || href.startsWith('#')) return;
             e.preventDefault();
             try {
-                let finalUrl = new URL(href, _url).href;
+                let finalUrl = new URL(href, window.location.href).href;
                 window.parent.postMessage({ type: 'ENGINE_NAV', target: finalUrl }, '*');
             } catch(err) {}
         }
@@ -33,15 +34,17 @@ const getInjectJS = (currentUrl: string) => `
         if (form) {
             e.preventDefault();
             try {
-                let action = form.getAttribute('action') || _url;
-                let url = new URL(action, _url);
+                let action = form.getAttribute('action') || window.location.href;
+                let url = new URL(action, window.location.href);
                 let formData = new FormData(form);
                 let params = new URLSearchParams(formData);
                 
                 if (form.method && form.method.toUpperCase() === 'POST') {
                     window.parent.postMessage({ type: 'ENGINE_NAV', target: url.href + (url.search ? '&' : '?') + params.toString() }, '*');
                 } else {
-                    url.search = params.toString();
+                    params.forEach((value, key) => {
+                        url.searchParams.set(key, value);
+                    });
                     window.parent.postMessage({ type: 'ENGINE_NAV', target: url.href }, '*');
                 }
             } catch(err) {}
@@ -103,7 +106,9 @@ export const proxyHandler = createProxyMiddleware({
                 let html = responseBuffer.toString('utf8');
                 html = html.replace(/integrity=(['"]).*?\1/gi, '');
                 
-                html = html.replace(/(href|src)=["']\/\//gi, '$1="/__p/https://');
+                html = html.replace(/(href|src|action)=["']\/([^/])/gi, '$1="/__p/' + target.origin + '/$2');
+                html = html.replace(/(href|src|action)=["']\/["']/gi, '$1="/__p/' + target.origin + '/"');
+                html = html.replace(/(href|src|action)=["']\/\//gi, '$1="https://');
 
                 const injectCode = getInjectJS(target.href);
                 
