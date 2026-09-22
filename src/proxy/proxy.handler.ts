@@ -30,14 +30,20 @@ const getInjectJS = (currentUrl: string) => `
 
     document.addEventListener('submit', function(e) {
         let form = e.target.closest('form');
-        if (form && (!form.method || form.method.toUpperCase() === 'GET')) {
+        if (form) {
             e.preventDefault();
-            let action = form.getAttribute('action') || '';
             try {
+                let action = form.getAttribute('action') || _url;
                 let url = new URL(action, _url);
-                let params = new URLSearchParams(new FormData(form));
-                url.search = params.toString();
-                window.parent.postMessage({ type: 'ENGINE_NAV', target: url.href }, '*');
+                let formData = new FormData(form);
+                let params = new URLSearchParams(formData);
+                
+                if (form.method && form.method.toUpperCase() === 'POST') {
+                    window.parent.postMessage({ type: 'ENGINE_NAV', target: url.href + (url.search ? '&' : '?') + params.toString() }, '*');
+                } else {
+                    url.search = params.toString();
+                    window.parent.postMessage({ type: 'ENGINE_NAV', target: url.href }, '*');
+                }
             } catch(err) {}
         }
     }, true);
@@ -97,6 +103,8 @@ export const proxyHandler = createProxyMiddleware({
                 let html = responseBuffer.toString('utf8');
                 html = html.replace(/integrity=(['"]).*?\1/gi, '');
                 
+                html = html.replace(/(href|src)=["']\/\//gi, '$1="/__p/https://');
+
                 const injectCode = getInjectJS(target.href);
                 
                 if (/<head>/i.test(html)) {
