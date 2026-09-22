@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Gateway Engine Core</title>
+    <link rel="stylesheet" href="/__static/css/shell.css">
+</head>
+<body>
+    <iframe id="gateway-view" src="/__newtab"></iframe>
+    
+    <div id="__engine_bar__">
+        <button onclick="try{document.getElementById('gateway-view').contentWindow.history.back()}catch(e){}">◀</button>
+        <button onclick="try{document.getElementById('gateway-view').contentWindow.history.forward()}catch(e){}">▶</button>
+        <form id="engine-form">
+            <input type="text" id="engine-input" placeholder="Search or type URL..." autocomplete="off">
+        </form>
+        <button class="home-btn" onclick="navigateTo('MAIN')">Home</button>
+    </div>
+
+    <script>
+        const view = document.getElementById('gateway-view');
+        const input = document.getElementById('engine-input');
+
+        async function navigateTo(target) {
+            try {
+                const res = await fetch('/__engine/set-target', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target })
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    view.src = data.url;
+                    if (target === 'MAIN') {
+                        input.value = '';
+                        input.placeholder = 'Search or type URL...';
+                    } else {
+                        input.value = target.startsWith('http') ? target : `https://${target}`;
+                    }
+                }
+            } catch (e) {
+                console.error('Engine connection failed', e);
+            }
+        }
+
+        document.getElementById('engine-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (input.value.trim()) navigateTo(input.value);
+        });
+
+        window.addEventListener('message', (e) => {
+            if (e.data && e.data.type === 'ENGINE_NAV') {
+                navigateTo(e.data.target);
+            }
+        });
+    </script>
+</body>
+</html>
