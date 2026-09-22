@@ -7,15 +7,15 @@
     <link rel="stylesheet" href="/__static/css/shell.css">
 </head>
 <body>
-    <iframe id="gateway-view" src="/__newtab"></iframe>
+    <iframe id="gateway-view" src="/__newtab" title="Gateway content"></iframe>
 
     <div id="__engine_bar__" style="display: none;">
-        <button onclick="try{document.getElementById('gateway-view').contentWindow.history.back()}catch(e){}">◀</button>
-        <button onclick="try{document.getElementById('gateway-view').contentWindow.history.forward()}catch(e){}">▶</button>
+        <button type="button" id="back-button" aria-label="Back">◀</button>
+        <button type="button" id="forward-button" aria-label="Forward">▶</button>
         <form id="engine-form">
-            <input type="text" id="engine-input" placeholder="Search or type URL..." autocomplete="off">
+            <input type="text" id="engine-input" placeholder="Search or type URL..." autocomplete="off" aria-label="Search or type URL">
         </form>
-        <button class="home-btn" onclick="navigateTo('MAIN')">Home</button>
+        <button type="button" class="home-btn" id="home-button">Home</button>
     </div>
 
     <script>
@@ -23,7 +23,7 @@
         const input = document.getElementById('engine-input');
         const engineBar = document.getElementById('__engine_bar__');
 
-        view.addEventListener('load', () => {
+        function updateEngineBar() {
             try {
                 const href = view.contentWindow.location.href;
                 if (href.includes('/__newtab')) {
@@ -34,8 +34,10 @@
                     input.value = decodeURI(target);
                     engineBar.style.display = 'flex';
                 }
-            } catch(e) {}
-        });
+            } catch {}
+        }
+
+        view.addEventListener('load', updateEngineBar);
 
         async function navigateTo(target) {
             if (typeof target === 'string' && target.startsWith('/__p/')) {
@@ -51,13 +53,23 @@
                 if (data.success) {
                     view.src = data.url;
                 }
-            } catch(e) {}
+            } catch {}
         }
 
         document.getElementById('engine-form').addEventListener('submit', (e) => {
             e.preventDefault();
             if (input.value.trim()) navigateTo(input.value);
         });
+
+        document.getElementById('back-button').addEventListener('click', () => {
+            try { view.contentWindow.history.back(); } catch {}
+        });
+
+        document.getElementById('forward-button').addEventListener('click', () => {
+            try { view.contentWindow.history.forward(); } catch {}
+        });
+
+        document.getElementById('home-button').addEventListener('click', () => navigateTo('MAIN'));
 
         window.addEventListener('message', (e) => {
             if (e.data && e.data.type === 'ENGINE_NAV') {

@@ -1,13 +1,13 @@
-# Gateway Engine Core
+# Gateway Engine
 
-A high-performance, stateless proxy gateway built with Node.js, Express, and TypeScript. This engine securely routes client requests, spoofs user agents, and dynamically injects base routing paths to handle complex cross-origin redirections.
+A stateless proxy gateway built with Node.js, Express, and TypeScript. It routes pages through a path-prefixed proxy, rewrites relative assets, and keeps navigation inside the gateway shell.
 
 ## Architecture
-This project relies on a **Path-Prefixed** routing architecture (`/__p/BASE64_URL`), completely isolating state and allowing concurrent multi-user handling without context bleeding.
+The proxy uses a path-prefixed architecture (`/__p/URL`). Each request carries its target URL, so the server does not need per-user target state.
 
 ## Features
 - **Stateless Proxying**: No server-side target caching or global variables.
-- **Header Manipulation**: Strips toxic CORS headers (e.g., Content-Security-Policy) and spoofs IP/User-Agent.
+- **Header Manipulation**: Removes headers that prevent embedding and sets a browser-like User-Agent.
 - **Relative Path Resolution**: Injects `<base>` tags to fix broken assets (CSS, JS, Images) on destination sites.
 - **Domain Blacklisting**: Custom User-Agent routing logic based on the target domain.
 
@@ -34,7 +34,7 @@ This project relies on a **Path-Prefixed** routing architecture (`/__p/BASE64_UR
    ```env
    PORT=3000
    HOST=localhost
-   DEFAULT_ENGINE=[https://duckduckgo.com/?q=](https://duckduckgo.com/?q=)
+   DEFAULT_ENGINE=https://duckduckgo.com/?q=
    ```
 
 ## Usage
@@ -42,6 +42,18 @@ This project relies on a **Path-Prefixed** routing architecture (`/__p/BASE64_UR
 Start the development server:
 ```bash
 npm run dev
+```
+
+For a production-style local run:
+
+```bash
+npm start
+```
+
+Run the TypeScript validation without starting the server:
+
+```bash
+npm run typecheck
 ```
 The engine UI will be available at `http://localhost:3000/`.
 

@@ -1,175 +1,147 @@
-import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
 import { Request, Response } from 'express';
+import { createProxyMiddleware, responseInterceptor } from 'http-proxy-middleware';
 import { envConfig } from '../config/env.config';
 
+const proxiedPath = '/__p/';
+const systemPrefixes = ['/__p/', '/__engine/', '/__static/'];
+const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+const removedHeaders = [
+    'content-security-policy',
+    'content-security-policy-report-only',
+    'x-frame-options',
+    'x-content-type-options',
+    'cross-origin-resource-policy',
+    'cross-origin-embedder-policy',
+    'cross-origin-opener-policy',
+    'access-control-allow-origin',
+    'attribution-reporting-register-source',
+    'attribution-reporting-register-trigger',
+    'attribution-reporting-info'
+];
+
 const getTargetUrl = (req: Request): URL | null => {
-    const fromUrl = (req.originalUrl || req.url || '').replace(/^\/__p\//, '');
+    const encodedTarget = (req.originalUrl || req.url || '').replace(/^\/__p\//, '');
+
     try {
-        const u = new URL(fromUrl);
-        if (u.protocol === 'http:' || u.protocol === 'https:') return u;
+        const target = new URL(encodedTarget);
+        if (target.protocol === 'http:' || target.protocol === 'https:') return target;
     } catch {}
-    const referer = req.headers.referer || '';
-    const m = referer.match(/\/__p\/(https?:\/\/[^\/\s?#]+)/);
-    if (m) {
-        try {
-            return new URL(m[1] + req.originalUrl);
-        } catch {}
+
+    const referer = req.headers.referer ?? '';
+    const match = referer.match(/\/__p\/(https?:\/\/[^/\s?#]+)/i);
+    if (!match) return null;
+
+    try {
+        return new URL(match[1]);
+    } catch {
+        return null;
     }
-    return null;
 };
 
-const getInjectJS = (currentUrl: string) => `
+const getInjectedScript = (currentUrl: string): string => `
 <script>
-(function() {
+(function () {
     const currentUrl = ${JSON.stringify(currentUrl)};
-    
-    function resolveUrl(url) {
-        try { return new URL(url, currentUrl).href; } catch(err) { return null; }
+    const systemPrefixes = ${JSON.stringify(systemPrefixes)};
+
+    function resolveUrl(value) {
+        try { return new URL(value, currentUrl).href; } catch { return null; }
     }
-    
-    function proxify(url) {
-        if (typeof url !== 'string') return url;
-        if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('javascript:')) return url;
-        if (url.startsWith('/__p/') || url.startsWith('/__engine/') || url.startsWith('/__static/')) return url;
-        
-        if (url.startsWith('//')) {
-            return '/__p/https:' + url;
-        }
-        
+
+    function isIgnored(value) {
+        return typeof value !== 'string' || /^(data:|blob:|javascript:|#)/i.test(value);
+    }
+
+    function proxify(value) {
+        if (isIgnored(value) || systemPrefixes.some((prefix) => value.startsWith(prefix))) return value;
+        if (value.startsWith('//')) return '/__p/https:' + value;
+
+        const resolved = resolveUrl(value);
+        return resolved ? '/__p/' + resolved : value;
+    }
+
+    function navigate(value) {
+        const resolved = resolveUrl(value);
+        if (resolved) window.parent.postMessage({ type: 'ENGINE_NAV', target: resolved }, '*');
+    }
+
+    document.addEventListener('click', function (event) {
+        const link = event.target.closest('a');
+        if (!link || !link.hasAttribute('href')) return;
+
+        const href = link.getAttribute('href');
+        if (isIgnored(href) || href.startsWith('/__p/')) return;
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        navigate(href);
+    }, true);
+
+    document.addEventListener('submit', function (event) {
+        const form = event.target.closest('form');
+        if (!form) return;
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
         try {
-            let resolved = new URL(url, currentUrl).href;
-            return '/__p/' + resolved;
-        } catch(e) {
-            return url;
-        }
-    }
-    
-    function sendNav(url) {
-        if (typeof url !== 'string') return;
-        if (url.startsWith('/__p/')) return;
-        const finalUrl = resolveUrl(url);
-        if (finalUrl) {
-            window.parent.postMessage({ type: 'ENGINE_NAV', target: finalUrl }, '*');
-        }
-    }
-    
-    document.addEventListener('click', function(e) {
-        let a = e.target.closest('a');
-        if (a) {
-            a.removeAttribute('target');
-            if (a.hasAttribute('href')) {
-                let href = a.getAttribute('href');
-                if (!href || href.startsWith('javascript:') || href.startsWith('#')) return;
-                if (href.startsWith('/__p/')) return;
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                sendNav(href);
-            }
-        }
+            const action = new URL(form.getAttribute('action') || '', currentUrl);
+            const params = new URLSearchParams(new FormData(form));
+            params.forEach((value, key) => action.searchParams.set(key, value));
+            navigate(action.href);
+        } catch {}
     }, true);
 
-    document.addEventListener('submit', function(e) {
-        let form = e.target.closest('form');
-        if (form) {
-            form.removeAttribute('target');
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            try {
-                let action = form.getAttribute('action') || '';
-                let url = new URL(action, currentUrl);
-                let formData = new FormData(form);
-                let params = new URLSearchParams(formData);
-                
-                if (form.method && form.method.toUpperCase() === 'POST') {
-                    const queryObj = Object.fromEntries(params.entries());
-                    const nextUrl = url.href + (url.search ? '&' : '?') + new URLSearchParams(queryObj).toString();
-                    sendNav(nextUrl);
-                } else {
-                    params.forEach((value, key) => {
-                        url.searchParams.set(key, value);
-                    });
-                    sendNav(url.href);
-                }
-            } catch(err) {}
-        }
-    }, true);
-
-    const originalSetAttribute = Element.prototype.setAttribute;
-    Element.prototype.setAttribute = function(name, value) {
-        if ((name === 'src' || name === 'href') && typeof value === 'string') {
-            value = proxify(value);
-        }
-        return originalSetAttribute.call(this, name, value);
-    };
-
-    const originalCreateElement = document.createElement.bind(document);
-    document.createElement = function(tagName, options) {
-        const el = originalCreateElement(tagName, options);
-        const tag = String(tagName).toLowerCase();
-        if (['script', 'img', 'iframe', 'link', 'source', 'video', 'audio'].includes(tag)) {
-            try {
-                let srcVal = '', hrefVal = '';
-                Object.defineProperty(el, 'src', {
-                    configurable: true,
-                    get: function() { return srcVal || this.getAttribute('src') || ''; },
-                    set: function(v) { srcVal = proxify(v); originalSetAttribute.call(this, 'src', srcVal); }
-                });
-                Object.defineProperty(el, 'href', {
-                    configurable: true,
-                    get: function() { return hrefVal || this.getAttribute('href') || ''; },
-                    set: function(v) { hrefVal = proxify(v); originalSetAttribute.call(this, 'href', hrefVal); }
-                });
-            } catch(err) {}
-        }
-        return el;
+    const nativeSetAttribute = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function (name, value) {
+        const nextValue = ['src', 'href', 'action', 'poster'].includes(name.toLowerCase())
+            ? proxify(value)
+            : value;
+        return nativeSetAttribute.call(this, name, nextValue);
     };
 })();
 </script>
 `;
 
-const rewriteCssUrls = (css: string, targetOrigin: string): string => {
-    return css.replace(
-        /url\(\s*(['"]?)(\/(?!\/\vert{}__p\/\vert{}__engine\/\vert{}__static\/)[^'")]*)\1\s*\)/gi,
-        (match, quote, p) => `url(${quote}/__p/${targetOrigin}${p}${quote})`
-    );
-};
+const rewriteCssUrls = (css: string, targetOrigin: string): string => css.replace(
+    /url\(\s*(['"]?)(\/(?!\/|__p\/|__engine\/|__static\/)[^'")]*)\1\s*\)/gi,
+    (_, quote: string, path: string) => `url(${quote}${proxiedPath}${targetOrigin}${path}${quote})`
+);
 
 const rewriteHtmlPaths = (html: string, targetOrigin: string): string => {
-    let replaced = html.replace(/<meta[^>]+http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>/gi, '');
-    replaced = replaced.replace(/<meta[^>]+name\s*=\s*["']?referrer["']?[^>]*>/gi, '');
-    replaced = replaced.replace(/\bping\s*=\s*(["']).*?\1/gi, '');
+    let result = html
+        .replace(/<meta[^>]+http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>/gi, '')
+        .replace(/<meta[^>]+name\s*=\s*["']?referrer["']?[^>]*>/gi, '')
+        .replace(/\bping\s*=\s*(["']).*?\1/gi, '');
 
-    replaced = replaced.replace(
-        /(\s(?:src|href|action|poster|data-src|srcset)\s*=\s*)(["'])\/(?!\/|__p\/|__engine\/|__static\/)([^"']*)\2/gi,
-        '$1$2/__p/' + targetOrigin + '/$3$2'
+    result = result.replace(
+        /(\s(?:src|href|action|poster|data-src)\s*=\s*)(["'])\/(?!\/|__p\/|__engine\/|__static\/)([^"']*)\2/gi,
+        `$1$2${proxiedPath}${targetOrigin}/$3$2`
     );
-    replaced = replaced.replace(
-        /(\s(?:src|href|action|poster|data-src|srcset)\s*=\s*)(["'])\/\/([^"']+)\2/gi,
-        '$1$2/__p/https://$3$2'
+    result = result.replace(
+        /(\s(?:src|href|action|poster|data-src)\s*=\s*)(["'])\/\/([^"']+)\2/gi,
+        `$1$2${proxiedPath}https://$3$2`
     );
-    
-    // شناسایی منعطف تمام Meta Refresh ها و URL های جاوااسکریپتی که به روت (/) اشاره می‌کنند
-    replaced = replaced.replace(
-        /([;,\s]url\s*=\s*['"]?)\/(?!\/|__p\/|__engine\/|__static\/)/gi,
-        '$1/__p/' + targetOrigin + '/'
-    );
-    replaced = replaced.replace(
-        /(window\.location(?:\.href|\.replace)?\s*(?:=|[(])\s*["'])\/(?!\/|__p\/|__engine\/|__static\/)/gi,
-        '$1/__p/' + targetOrigin + '/'
-    );
-    replaced = replaced.replace(
-        /([^a-zA-Z0-9_])(location(?:\.href|\.replace)?\s*(?:=|[(])\s*["'])\/(?!\/|__p\/|__engine\/|__static\/)/gi,
-        '$1$2/__p/' + targetOrigin + '/'
+    result = result.replace(
+        /([;,\s]url\s*=\s*["']?)\/(?!\/|__p\/|__engine\/|__static\/)/gi,
+        `$1${proxiedPath}${targetOrigin}/`
     );
 
-    return replaced;
+    return result;
+};
+
+const rewriteResponse = (html: string, target: URL): string => {
+    const rewritten = rewriteHtmlPaths(html.replace(/integrity=(['"]).*?\1/gi, ''), target.origin);
+    const injection = getInjectedScript(target.href);
+
+    if (/<head\b[^>]*>/i.test(rewritten)) return rewritten.replace(/(<head\b[^>]*>)/i, `$1${injection}`);
+    if (/<html\b[^>]*>/i.test(rewritten)) return rewritten.replace(/(<html\b[^>]*>)/i, `$1<head>${injection}</head>`);
+    return `${injection}${rewritten}`;
 };
 
 export const proxyHandler = createProxyMiddleware({
-    router: (req: Request) => {
-        const target = getTargetUrl(req);
-        return target ? target.origin : envConfig.DEFAULT_ENGINE;
-    },
+    router: (req: Request) => getTargetUrl(req)?.origin ?? envConfig.defaultEngine,
     changeOrigin: true,
     selfHandleResponse: true,
     ws: true,
@@ -181,83 +153,45 @@ export const proxyHandler = createProxyMiddleware({
         proxyReq: (proxyReq, req: Request) => {
             const target = getTargetUrl(req);
             if (!target) return;
-            
+
             proxyReq.removeHeader('accept-encoding');
-            proxyReq.setHeader('Referer', target.origin + '/');
+            proxyReq.setHeader('Referer', `${target.origin}/`);
             proxyReq.setHeader('Origin', target.origin);
             proxyReq.setHeader('Host', target.host);
-            proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+            proxyReq.setHeader('User-Agent', browserUserAgent);
         },
         proxyRes: responseInterceptor(async (responseBuffer, proxyRes, req: Request, res) => {
-            const expressRes = res as Response;
             const target = getTargetUrl(req);
             if (!target) return responseBuffer;
 
-            const toxicHeaders = [
-                'content-security-policy',
-                'content-security-policy-report-only',
-                'x-frame-options',
-                'x-content-type-options',
-                'cross-origin-resource-policy',
-                'cross-origin-embedder-policy',
-                'cross-origin-opener-policy',
-                'access-control-allow-origin',
-                'attribution-reporting-register-source',
-                'attribution-reporting-register-trigger',
-                'attribution-reporting-info'
-            ];
-            toxicHeaders.forEach(h => expressRes.removeHeader(h));
+            const expressRes = res as Response;
+            removedHeaders.forEach((header) => expressRes.removeHeader(header));
             expressRes.setHeader('Access-Control-Allow-Origin', '*');
 
-            const status = proxyRes.statusCode || 200;
-
-            if ([301, 302, 303, 307, 308].includes(status) && proxyRes.headers['location']) {
-                const loc = String(proxyRes.headers['location']);
-                if (!loc.startsWith('/__p/')) {
-                    try {
-                        const next = new URL(loc, target.origin);
-                        expressRes.setHeader('location', `/__p/${next.href}`);
-                    } catch {}
-                }
+            const status = proxyRes.statusCode ?? 200;
+            const location = proxyRes.headers.location;
+            if (redirectStatuses.has(status) && location) {
+                try {
+                    expressRes.setHeader('location', `${proxiedPath}${new URL(String(location), target.href).href}`);
+                } catch {}
                 return responseBuffer;
             }
 
-            const ct = String(proxyRes.headers['content-type'] || '').toLowerCase();
-            const urlLower = (req.originalUrl || '').toLowerCase();
-
-            if (ct.includes('text/html')) {
-                let html = responseBuffer.toString('utf8');
-                html = html.replace(/integrity=(['"]).*?\1/gi, '');
-                html = rewriteHtmlPaths(html, target.origin);
-                
-                const inject = getInjectJS(target.href);
-                
-                if (/<head\b[^>]*>/i.test(html)) {
-                    html = html.replace(/(<head\b[^>]*>)/i, `$1\n${inject}`);
-                } else if (/<html\b[^>]*>/i.test(html)) {
-                    html = html.replace(/(<html\b[^>]*>)/i, `$1\n<head>${inject}</head>`);
-                } else if (/<!doctype\b[^>]*>/i.test(html)) {
-                    html = html.replace(/(<!doctype\b[^>]*>)/i, `$1\n${inject}`);
-                } else {
-                    html = inject + html;
-                }
-
-                return Buffer.from(html, 'utf8');
+            const contentType = String(proxyRes.headers['content-type'] ?? '').toLowerCase();
+            const requestUrl = (req.originalUrl || '').toLowerCase();
+            if (contentType.includes('text/html')) {
+                return Buffer.from(rewriteResponse(responseBuffer.toString('utf8'), target), 'utf8');
             }
 
-            if (ct.includes('text/css') || urlLower.endsWith('.css')) {
-                let css = responseBuffer.toString('utf8');
-                css = rewriteCssUrls(css, target.origin);
-                return Buffer.from(css, 'utf8');
+            if (contentType.includes('text/css') || requestUrl.endsWith('.css')) {
+                return Buffer.from(rewriteCssUrls(responseBuffer.toString('utf8'), target.origin), 'utf8');
             }
 
             return responseBuffer;
         }),
-        error: (err, req, res) => {
+        error: (_error, _req, res) => {
             const expressRes = res as Response;
-            if (!expressRes.headersSent) {
-                expressRes.status(502).send('Gateway Core Error: Target unreachable.');
-            }
+            if (!expressRes.headersSent) expressRes.status(502).send('Gateway Engine: target unreachable.');
         }
     }
 });

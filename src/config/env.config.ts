@@ -1,5 +1,7 @@
+const port = Number.parseInt(process.env.PORT ?? '3000', 10);
+
 export const envConfig = {
-    PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 3000,
-    HOST: process.env.HOST || 'localhost',
-    DEFAULT_ENGINE: process.env.DEFAULT_ENGINE || 'https://duckduckgo.com/?q='
-};
+    port: Number.isFinite(port) ? port : 3000,
+    host: process.env.HOST ?? 'localhost',
+    defaultEngine: process.env.DEFAULT_ENGINE ?? 'https://duckduckgo.com/?q='
+} as const;

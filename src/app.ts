@@ -9,32 +9,27 @@ import { envConfig } from './config/env.config';
 const app = express();
 
 app.set('view engine', 'ejs');
-app.set('views', path.join(process.cwd(), 'views'));
+app.set('views', path.resolve('views'));
 
-app.use('/__static', express.static(path.join(process.cwd(), 'public')));
+app.use('/__static', express.static(path.resolve('public')));
 
 app.use('/__p', proxyHandler);
 
-// تور نجات (Escape Catcher): گرفتن درخواست‌های فراری از پروکسی
 app.use((req, res, next) => {
     const referer = req.headers.referer || '';
     let targetOrigin = '';
     
-    // ۱. شناسایی مبدا از طریق رفرر (اگر موجود بود)
     if (referer.includes('/__p/')) {
         const match = referer.match(/\/__p\/(https?:\/\/[^\/\s?#]+)/);
         if (match) targetOrigin = match[1];
     }
     
-    // ۲. شناسایی از طریق پارامترهای سرچ (وقتی رفرر توسط داک‌داک‌گو پاک شده است)
     if (!targetOrigin && req.path === '/' && req.query.q) {
-        targetOrigin = new URL(envConfig.DEFAULT_ENGINE).origin;
+        targetOrigin = new URL(envConfig.defaultEngine).origin;
     }
 
-    // اگر درخواست گم شده بود و متعلق به فایل‌های سیستمی ما نبود، به پروکسی برگردان
     const isSystemRoute = req.path.startsWith('/__engine') || req.path.startsWith('/__newtab');
     if (targetOrigin && !isSystemRoute && !req.originalUrl.startsWith('/__p/')) {
-        // وضعیت 307 متدهای POST را حفظ می‌کند تا ریدایرکت‌های فیلتر نشکنند
         return res.redirect(307, `/__p/${targetOrigin}${req.originalUrl}`);
     }
 
