@@ -9,7 +9,7 @@
 <body>
     <iframe id="gateway-view" src="/__newtab"></iframe>
     
-    <div id="__engine_bar__">
+    <div id="__engine_bar__" style="display: none;">
         <button onclick="try{document.getElementById('gateway-view').contentWindow.history.back()}catch(e){}">◀</button>
         <button onclick="try{document.getElementById('gateway-view').contentWindow.history.forward()}catch(e){}">▶</button>
         <form id="engine-form">
@@ -21,6 +21,22 @@
     <script>
         const view = document.getElementById('gateway-view');
         const input = document.getElementById('engine-input');
+        const engineBar = document.getElementById('__engine_bar__');
+
+        view.addEventListener('load', () => {
+            try {
+                const currentHref = view.contentWindow.location.href;
+                if (currentHref.includes('/__newtab')) {
+                    input.value = '';
+                    input.placeholder = 'Search or type URL...';
+                    engineBar.style.display = 'none';
+                } else if (currentHref.includes('/__p/')) {
+                    const target = currentHref.split('/__p/').slice(1).join('/__p/');
+                    input.value = decodeURI(target);
+                    engineBar.style.display = 'flex';
+                }
+            } catch(e) {}
+        });
 
         async function navigateTo(target) {
             try {
@@ -33,16 +49,8 @@
                 
                 if (data.success) {
                     view.src = data.url;
-                    if (target === 'MAIN') {
-                        input.value = '';
-                        input.placeholder = 'Search or type URL...';
-                    } else {
-                        input.value = target.startsWith('http') ? target : `https://${target}`;
-                    }
                 }
-            } catch (e) {
-                console.error('Engine connection failed', e);
-            }
+            } catch (e) {}
         }
 
         document.getElementById('engine-form').addEventListener('submit', (e) => {
