@@ -14,27 +14,7 @@ const getTargetUrl = (req: Request): URL | null => {
 const getInjectJS = (currentUrl: string) => `
 <script>
 (function() {
-    const originalFetch = window.fetch;
-    window.fetch = function(input, init) {
-        let url = (typeof input === 'string') ? input : (input && input.url ? input.url : '');
-        if (url && /^https?:/i.test(url)) {
-            if (typeof input === 'string') {
-                input = '/__p/' + url;
-            } else {
-                input = new Request('/__p/' + url, input);
-            }
-        }
-        return originalFetch.apply(this, arguments);
-    };
-
-    const originalOpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-        if (typeof url === 'string' && /^https?:/i.test(url)) {
-            url = '/__p/' + url;
-        }
-        return originalOpen.call(this, method, url, ...rest);
-    };
-
+    const _url = '${currentUrl}';
     document.addEventListener('click', function(e) {
         let a = e.target.closest('a');
         if (a && a.hasAttribute('href')) {
@@ -42,7 +22,7 @@ const getInjectJS = (currentUrl: string) => `
             if (href.startsWith('javascript:') || href.startsWith('#')) return;
             e.preventDefault();
             try {
-                let finalUrl = new URL(href, '${currentUrl}').href;
+                let finalUrl = new URL(href, _url).href;
                 window.parent.postMessage({ type: 'ENGINE_NAV', target: finalUrl }, '*');
             } catch(err) {}
         }
@@ -54,7 +34,7 @@ const getInjectJS = (currentUrl: string) => `
             e.preventDefault();
             let action = form.getAttribute('action') || '';
             try {
-                let url = new URL(action, '${currentUrl}');
+                let url = new URL(action, _url);
                 let params = new URLSearchParams(new FormData(form));
                 url.search = params.toString();
                 window.parent.postMessage({ type: 'ENGINE_NAV', target: url.href }, '*');
@@ -82,9 +62,10 @@ export const proxyHandler = createProxyMiddleware({
             const target = getTargetUrl(req);
             if (!target) return;
             
-            proxyReq.setHeader('accept-encoding', 'identity');
+            proxyReq.removeHeader('accept-encoding');
             proxyReq.setHeader('Referer', target.origin + '/');
             proxyReq.setHeader('Origin', target.origin);
+            proxyReq.setHeader('Host', target.host);
         },
         proxyRes: responseInterceptor(async (responseBuffer, proxyRes, req: Request, res) => {
             const expressRes = res as Response;
@@ -97,9 +78,11 @@ export const proxyHandler = createProxyMiddleware({
                 'x-frame-options',
                 'x-content-type-options',
                 'cross-origin-resource-policy',
-                'cross-origin-embedder-policy'
+                'cross-origin-embedder-policy',
+                'access-control-allow-origin'
             ];
             toxicHeaders.forEach(header => expressRes.removeHeader(header));
+            expressRes.setHeader('Access-Control-Allow-Origin', '*');
 
             const status = proxyRes.statusCode || 200;
 
@@ -114,9 +97,7 @@ export const proxyHandler = createProxyMiddleware({
                 let html = responseBuffer.toString('utf8');
                 html = html.replace(/integrity=(['"]).*?\1/gi, '');
                 
-                const baseHref = `/__p/${target.origin}${target.pathname}`;
-                const baseTag = `<base href="${baseHref}">`;
-                const injectCode = `${baseTag}${getInjectJS(target.href)}`;
+                const injectCode = getInjectJS(target.href);
                 
                 if (/<head>/i.test(html)) {
                     html = html.replace(/<head>/i, `<head>${injectCode}`);

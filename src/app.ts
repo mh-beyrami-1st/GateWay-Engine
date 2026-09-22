@@ -15,7 +15,19 @@ app.use('/__static', express.static(path.join(process.cwd(), 'public')));
 
 app.use('/', viewRoutes);
 app.use('/__engine', engineRoutes);
-app.use('/__p/:b64url', proxyHandler);
+
+app.use('/__p', proxyHandler);
+
+app.use((req, res, next) => {
+    const referer = req.headers.referer;
+    if (referer && referer.includes('/__p/')) {
+        const targetMatch = referer.match(/\/__p\/(https?:\/\/[^\/]+)/);
+        if (targetMatch) {
+            return res.redirect(`/__p/${targetMatch[1]}${req.originalUrl}`);
+        }
+    }
+    next();
+});
 
 app.use(errorHandler);
 
